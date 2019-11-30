@@ -1,0 +1,215 @@
+---
+title: "Monte Carlo Methods Assignment 2"
+author: "Eavan Pattie"
+date: "30/11/19"
+output: pdf_document
+---
+
+# The Density
+We are given the following density.
+$$
+\begin{aligned}
+    f(x) \propto\; &s_7 \exp\{-\sin(\frac{s_1 \cdot x^2}{15 - s_1}) - \frac{(x - 3 - s_2 \pi)^2}{2 \cdot (5 + s_3)^2}\} \\
+    &+ 2 \cdot (1 + s_7) \cdot \exp\{-\frac{x^2}{32}\} \\
+    &+ (10 - s_7) \cdot \exp\{-\cos(\frac{s_4 \cdot x^2}{15 + s_4}) - \frac{(x+3 +s_5 \pi)^2}{2 \cdot (5 + s_6)^2}\}
+\end{aligned}
+$$
+Where $s_i$ is the $i$th digit of my student number $1630022$. Applying the values of $s_i$ and simplifying we get the reduced form.
+$$
+\begin{aligned}
+    f(x) \propto\; &2 \cdot \exp\{-\sin(\frac{x^2}{14}) - \frac{(x - 3 - 6 \pi)^2}{128}\} \\
+    &+ 6 \cdot \exp\{-\frac{x^2}{32}\} \\
+    &+ 8 \cdot \exp\{-1 - \frac{(x+3)^2}{98}\}
+\end{aligned}
+$$
+Notice that the cosine term drops out entirely, which is very convenient. To evaluate this density we can use the following R code.
+```{r}
+ID <-  c(1,6,3,0,0,2,2)
+density <- function(x) {
+    t1 <- ID[7] * exp(-sin((ID[1] * x ** 2)/(15 - ID[1])) 
+                      - (x - 3 - ID[2] * pi) ** 2 / (2 * (5 + ID[3]) ** 2))
+    t2 <- 2 * (1 + ID[7]) * exp(- x**2 /32)
+    t3 <- (10 - ID[7]) * exp(-cos(ID[4] * x ** 2 / (15 + ID[4])) 
+                      - (x + 3 + ID[5] * pi)**2/(2*(5+ID[6])**2))
+    return(t1 + t2 + t3)
+}
+```
+Plotting this density we see that has many modes.
+```{r}
+xs <- seq(-20, 40, 0.1)
+plot(xs, density(xs), type="l")
+```
+
+# Sampling
+## Simulated Annealing and Metropolis Hastings
+We can implement a random walk metropolis hastings sampler as follows.
+```{r}
+MH <- function(num_samples, x0 = 0, temperature_scheme = rep(1, num_samples), sd = 1){
+    samples <- matrix(nrow = num_samples + 1)
+    samples[1] <- x0
+    for (i in 1:num_samples) {
+        proposal <- rnorm(1, mean = samples[i], sd = sd)
+        if (runif(1) <= (density(proposal) / density(samples[i])) ** temperature_scheme[i]) {
+            samples[i+1] <- proposal
+        } else {samples[i+1] <- samples[i]}
+    }
+    return(samples[2:num_samples+1])
+}
+```
+Notice that we've left in an optional temperature scheme. If this is left as a sequence of 1s, then it is equivalent to
+standard random walk metropolis hastings. However, we can leverage this to implement our mode finding algorithm using simulated
+annealing.
+
+```{r}
+simulated_annealing <- function(num_samples, max_temp = 10, x0 = 0, sd = 1) {
+    temperature_scheme = seq(1, max_temp, length.out = num_samples)
+    samples <- MH(num_samples, x0 = x0, temperature_scheme = temperature_scheme, sd = sd)
+    
+    mode <- NULL
+    density_mode <- -1
+    for (sample in samples){
+        if (density(sample) > density_mode){
+            mode <- sample
+            density_mode <- density(sample)
+        }
+    }
+    return(mode)
+}
+```
+
+Which yeilds the following mode for the distribution.
+```{r}
+simulated_annealing(10000)
+```
+Since we expect the mode to be close to 0, we set x0 to be $0$ and the standard deviation of the kernel to be $1$.
+When using random walk metropolis hastings to sample the distribution instead of finding the mode it makes sense to choose
+the standard deviation to be much larger. We can choose the value for standard deviation that maximizes the expected square
+jumping distance.
+```{r}
+esjd <- function(samples) {
+    total_distance <- 0
+    for (i in 2:length(samples)){
+        total_distance <- total_distance + (samples[i] - samples[i-1]) ** 2
+    }
+    return(total_distance / (length(samples) - 1))
+}
+```
+Iterating over a few candidates for standard deviation.
+```{r}
+for (sd in c(1,2,4,8,16,32,64)) {
+    samples <- MH(1000, sd = sd)
+    print(paste("Standard Deviation: ", sd, " | ESJD:", esjd(samples)))
+}
+```
+We can see that setting the standard deviation to $32$ would lead to a better sampler. This could be improved by using
+a finer search, however we will abandon random walk metropolis hastings for now.
+
+## Slice Sampler
+If we wished to implement a slice sampler for this density we would need to be able to sample from the level sets of the distribution.
+Computing the level sets for our density exactly would be a futile exercise, so we will not attempt it. We will instead derive loose
+bounds on the level set and then use rejection sampling to sample from the level set within our bounds.
+
+First, notice that level sets for gaussians are easy to compute 
+$S = \{ x\;| \;\mu - \sqrt{-2\sigma^2 (\log{k} - \alpha)} \leq x \leq \mu + \sqrt{-2\sigma^2 (\log{k} - \alpha)} \}$ where
+$k$ is the level and $\alpha$ is some constant of proportionality.
+We can therefore bound the distribution by the max of some gaussians upto a constant of proportionality, compute their level sets
+and find some uniform area that contains those level sets. We can then rejection sample from this area until we have a sample from
+the true level set. The implementation is given below.
+```{r}
+slice_sampler <- function(num_samples, x0 = 0, y0 = 1, show_ar = TRUE) {
+    samples <- matrix(nrow = num_samples + 1, ncol = 2)
+    samples[1,] <- c(x0,y0)
+    num_proposals <- 0
+    num_accepted <- 0
+    for (i in 1:num_samples){
+        lskew <- sqrt(-130 * (log(samples[i,2]) - 10))
+        rskew <- sqrt(-128 * (log(samples[i,2]) - 2 * exp(1)))
+        min_x = min(0.35 - lskew, 3 + 6 * pi - rskew)
+        max_x = max(0.35 + lskew, 3 + 6 * pi + rskew)
+        
+        new_x <- NULL
+        while (TRUE) {
+            proposal <- runif(1, min_x, max_x)
+            num_proposals <- num_proposals + 1
+            if (density(proposal) > samples[i,2]) {
+                new_x <- proposal
+                num_accepted <- num_accepted + 1
+                break
+            }
+        }
+        
+        new_y <- runif(1, 0, density(new_x))
+        samples[i+1,] <- c(new_x, new_y)
+    }
+    if (show_ar){print(paste("Acceptance Rate: ", num_accepted / num_proposals))}
+    return(samples[2:num_samples+1,])
+}
+```
+Inspecting this sampler we can see the following
+```{r}
+samples <- slice_sampler(10000)
+esjd(samples[,1])
+plot(xs, density(xs), type = "l")
+lines(samples[1:100,1], samples[1:100,2], type="s")
+```
+The expected square jumping distance is around 3 times higher than our best result from random walk metropolis hastings
+although our average acceptance rate when rejection sampling the level set is below a quarter.
+Furthermore, qualitatively we can see that the slice sampler is moving around the distribution quite quickly, as is reflected
+in the jumping distances.
+
+## Other Sampler
+As we saw from the slice sampler, the density of interest can be bounded by a mixture of gaussians. It is therefore natural to
+consider a transition kernel that is exactly this mixture. This would be implementing an independance sampler.
+
+To arrive at the mixture of gaussians we need simply to replace our $\sin$ term with its maximum $1$. After simplyfing the
+result we arrive at the the following.
+$$
+\begin{aligned}
+    g(x) \propto \;&2e \exp\{-\frac{(x - 3 - 6\pi)^2}{128}\} +\\
+    &6 \exp\{-\frac{x^2}{32}\} + \\
+    &\frac{8}{e}\exp\{-\frac{(x + 3)^2}{98}\}
+\end{aligned}
+$$
+The constant of proportionality is $\sqrt{2\pi}(16e + 24 + \frac{56}{e}) \approx 220.82$. The mixture weights are therefore
+$0.4937, 0.2724, 0.2339$ for the first, second and third component respectively. The independence sampler can then be implemented as
+follows.
+```{r}
+rgmm <- function(num = 1) {
+    choice <- runif(num)
+    samples <- c(rnorm(length(choice[choice < 0.4937]), mean = 3 + 6 * pi, sd = 8))
+    samples <- c(samples, rnorm(length(choice[0.4937 <= choice & choice < 0.7661]), mean = 0, sd = 4))
+    samples <- c(samples, rnorm(length(choice[0.7661 <= choice]), mean = -3, sd = 7))
+    return(samples)
+}
+
+dgmm <- function(x) {
+    return(0.4937 * dnorm(x, mean = 3 + 6 * pi, sd = 8) +
+           0.2724 * dnorm(x, mean = 0, sd = 4) +
+           0.2339 * dnorm(x, mean = -3, sd = 7))
+}
+
+indep_sampler <- function(num_samples, x0 = 0){
+    samples <- matrix(nrow = num_samples + 1)
+    samples[1] <- x0
+    for (i in 1:num_samples) {
+        proposal <- rgmm(1)
+        acceptance_prob <- (density(proposal) / density(samples[i])) * (dgmm(samples[i]) / dgmm(proposal))
+        if (runif(1) < acceptance_prob) {
+            samples[i + 1] <- proposal
+        } else {
+            samples[i + 1] <- samples[i]
+        }
+    }
+    return(samples[2:num_samples+1])
+}
+```
+Inspecting this sampler we can see
+```{r}
+samples <- indep_sampler(10000)
+esjd(samples)
+plot(xs, density(xs), type = "l")
+points(samples[1:100], density(samples[1:100]))
+```
+We have slightly lower jumping distances compared to the slice sampler, but we don't have to worry about the acceptance rate
+of sampling from a level set.
+Taking this into account, the independence sampler seems like the best sampler that has been tried.
