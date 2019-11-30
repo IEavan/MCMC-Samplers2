@@ -107,3 +107,11 @@ rej_sampler <- function(num_samples = 1){
     }
     return(samples[1:num_samples])
 }
+
+esjd <- function(samples) {
+    total_distance <- 0
+    for (i in 2:length(samples)){
+        total_distance <- total_distance + (samples[i] - samples[i-1]) ** 2
+    }
+    return(total_distance / (length(samples) - 1))
+}
