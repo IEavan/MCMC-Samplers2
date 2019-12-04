@@ -49,7 +49,8 @@ MH <- function(num_samples, x0 = 0, temperature_scheme = rep(1, num_samples), sd
     samples[1] <- x0
     for (i in 1:num_samples) {
         proposal <- rnorm(1, mean = samples[i], sd = sd)
-        if (runif(1) <= (density(proposal) / density(samples[i])) ** temperature_scheme[i]) {
+        if (runif(1) <= (density(proposal) / density(samples[i])) 
+            ** temperature_scheme[i]) {
             samples[i+1] <- proposal
         } else {samples[i+1] <- samples[i]}
     }
@@ -177,7 +178,8 @@ follows.
 rgmm <- function(num = 1) {
     choice <- runif(num)
     samples <- c(rnorm(length(choice[choice < 0.4937]), mean = 3 + 6 * pi, sd = 8))
-    samples <- c(samples, rnorm(length(choice[0.4937 <= choice & choice < 0.7661]), mean = 0, sd = 4))
+    samples <- c(samples, rnorm(length(choice[0.4937 <= choice & choice < 0.7661]),
+                                mean = 0, sd = 4))
     samples <- c(samples, rnorm(length(choice[0.7661 <= choice]), mean = -3, sd = 7))
     return(samples)
 }
@@ -193,7 +195,8 @@ indep_sampler <- function(num_samples, x0 = 0){
     samples[1] <- x0
     for (i in 1:num_samples) {
         proposal <- rgmm(1)
-        acceptance_prob <- (density(proposal) / density(samples[i])) * (dgmm(samples[i]) / dgmm(proposal))
+        acceptance_prob <- (density(proposal) / density(samples[i])) *
+            (dgmm(samples[i]) / dgmm(proposal))
         if (runif(1) < acceptance_prob) {
             samples[i + 1] <- proposal
         } else {
@@ -268,7 +271,8 @@ rej_sampler <- function(num_samples = 1){
     while (length(samples) < num_samples) {
         quantity <- pseudo_m * (num_samples - length(samples))
         proposals <- rgmm(quantity)
-        accepted_samples <- proposals[density(proposals) > runif(quantity, 0, gmm_bound(proposals))]
+        accepted_samples <- proposals[density(proposals) > 
+                                          runif(quantity, 0, gmm_bound(proposals))]
         samples <- c(samples, accepted_samples)
         
         pseudo_m <- quantity / length(accepted_samples)
