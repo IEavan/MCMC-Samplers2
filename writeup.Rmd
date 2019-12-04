@@ -213,3 +213,77 @@ points(samples[1:100], density(samples[1:100]))
 We have slightly lower jumping distances compared to the slice sampler, but we don't have to worry about the acceptance rate
 of sampling from a level set.
 Taking this into account, the independence sampler seems like the best sampler that has been tried.
+
+## New Acceptance Rate
+
+To show that the new acceptance probability is valid, we can show that the detailed balance condition holds for the new acceptance probability. For the $x \neq y$ case we want to show:
+
+$$
+\begin{aligned}
+\int_A f(x)K(x,y)dx &= \int_A f(y)K(y,x)dy \\
+& = \int_A f(y)q(x|y)\frac{f(x)q(y|x)}{f(x)q(y|x) + f(y)q(x|y)} +\\
+& f(y) + \delta_y(x)\frac{f(y)q(x|y)}{f(x)q(y|x) + f(y)q(x|y)}dy \\
+& \int_A \frac{f(x)f(y)q(x|y)q(y|x) + f(y)^2\delta_yq(x|y)}{f(x)q(y|x)+f(y)q(x|y)} \\
+& \int_A \frac{f(x)f(y)q(x|y)q(y|x)}{f(x)q(y|x)+f(y)q(x|y)} \\
+\end{aligned}
+$$
+where A is the state sapce, $f$ - invariant distribution and $K$ - the transition kernel. We apply the definition of the transition kernel and the acceptance probability, then we simplify to get the following:
+
+$$
+\int_A f(x)K(x,y)dx = \int_A \frac{f(x)f(y)q(x|y)q(y|x)}{f(x)q(y|x)+f(y)q(x|y)}
+$$
+
+Note: We know the case where $x=y$ is trivially equal, hence $\int_A f(x)K(x,y)dx = \int_A f(y)K(y,x)dy$ in all cases. Therefore, $f$ is the invariant distribution and the new acceptance probability is valid. 
+
+### Improvements over standard acceptance rate
+
+It is clear from the two acceptance rates that 
+
+$$
+\frac{f(y)q(x|y)}{f(y)q(x|y)+f(x)q(y|x)} \leq \frac{f(y)q(x|y)}{f(x)q(y|x)}
+$$
+therefore, the acceptance rate within the new acceptance probability will be always less than or equal to the Metropolis-Hasting's acceptance probability. This leads to higher autocorrelation and lower expected square jumping distance. We should therefore conclude that the new acceptance probability will give only slower convergence. 
+
+## My sampler
+
+We can see that our ditribution has a close upper bound with a Gaussian mixture model, therefore we can consider a rejection sampler that uses the Gaussian mixture model as a proposal density. The proposal distribution and our target density are plotted below. 
+
+```{r}
+gmm_bound <- function(x) {
+    t1 <- ID[7] * exp(1 - (x - 3 - ID[2] * pi) ** 2 / (2 * (5 + ID[3]) ** 2))
+    t2 <- 2 * (1 + ID[7]) * exp(- x**2 /32)
+    t3 <- (10 - ID[7]) * exp(-1 - (x + 3 + ID[5] * pi)**2/(2*(5+ID[6])**2))
+    return(t1 + t2 + t3)
+}
+x <- seq(-20,40, 0.1)
+plot(x, density(x), type="l")
+lines(x, gmm_bound(x))
+```
+
+Our rejection sampler is then as follows:
+```{r}
+rej_sampler <- function(num_samples = 1){
+    samples <- c()
+    pseudo_m <- 1
+    while (length(samples) < num_samples) {
+        quantity <- pseudo_m * (num_samples - length(samples))
+        proposals <- rgmm(quantity)
+        accepted_samples <- proposals[density(proposals) > runif(quantity, 0, gmm_bound(proposals))]
+        samples <- c(samples, accepted_samples)
+        
+        pseudo_m <- quantity / length(accepted_samples)
+        print(paste("Acceptance Rate: ", 1 / pseudo_m))
+    }
+    return(samples[1:num_samples])
+}
+
+```
+
+Since our rejection sampler gives iid draws we do not need to concern ourselves with the rate of convergence. We only need to consider the acceptance rate.
+```{r}
+start_time <- Sys.time()
+samples <- rej_sampler(1000000)
+end_time <- Sys.time()
+end_time-start_time
+```
+Since our acceptance rate is above 70% and it takes less than a second to generate one million of iid samples, there is little to be gained by using a Markov Chain based sampler.
